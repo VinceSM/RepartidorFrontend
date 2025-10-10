@@ -1,5 +1,6 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_CONFIG, buildApiUrl } from '../config/config';
 
 const AuthContext = createContext();
 
@@ -13,7 +14,7 @@ export function AuthProvider({ children }) {
 
   const checkAuthState = async () => {
     try {
-      const userData = await AsyncStorage.getItem('user');
+      const userData = await AsyncStorage.getItem('repartidorData');
       if (userData) {
         setUser(JSON.parse(userData));
       }
@@ -28,29 +29,57 @@ export function AuthProvider({ children }) {
     try {
       setLoading(true);
       
-      // Simulación de login - reemplaza con tu API real
-      console.log('Intentando login con:', email, password);
-      
-      // Simulamos una respuesta exitosa después de 1 segundo
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Datos de usuario simulados
-      const userData = {
-        id: 1,
-        email: email,
-        name: 'Usuario Cliente',
-        token: 'simulated-token-' + Date.now()
+      console.log('🔐 Intentando login con:', email);
+      console.log('🔗 URL:', buildApiUrl(API_CONFIG.ENDPOINTS.REPARTIDORES.LOGIN));
+
+      const response = await fetch(buildApiUrl(API_CONFIG.ENDPOINTS.REPARTIDORES.LOGIN), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: email,
+          password: password
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Credenciales inválidas');
+      }
+
+      const result = await response.json();
+      console.log('✅ Login exitoso:', result);
+
+      // Guardar datos del repartidor
+      const repartidorData = {
+        id: result.Repartidor?.idrepartidor,
+        email: result.Repartidor?.email,
+        nombreCompleto: result.Repartidor?.nombreCompleto,
+        celular: result.Repartidor?.celular,
+        vehiculo: result.Repartidor?.vehiculo,
+        token: result.Token, // Si tu backend devuelve un token
+        ...result.Repartidor
       };
+
+      await AsyncStorage.setItem('repartidorData', JSON.stringify(repartidorData));
+      setUser(repartidorData);
       
-      // Guardar en AsyncStorage
-      await AsyncStorage.setItem('user', JSON.stringify(userData));
-      setUser(userData);
+      return { success: true, data: repartidorData };
       
-      return { success: true };
     } catch (error) {
+      console.error('❌ Error en login:', error);
+      let errorMessage = error.message;
+      
+      if (errorMessage.includes('Failed to fetch')) {
+        errorMessage = 'No se pudo conectar con el servidor. Verifica tu conexión.';
+      } else if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
+        errorMessage = 'Credenciales inválidas';
+      }
+      
       return { 
         success: false, 
-        error: error.message || 'Error al iniciar sesión' 
+        error: errorMessage 
       };
     } finally {
       setLoading(false);
@@ -59,10 +88,57 @@ export function AuthProvider({ children }) {
 
   const logout = async () => {
     try {
-      await AsyncStorage.removeItem('user');
+      await AsyncStorage.multiRemove(['repartidorData', 'userToken']);
       setUser(null);
+      console.log('✅ Logout exitoso');
     } catch (error) {
-      console.error('Error al cerrar sesión:', error);
+      console.error('❌ Error al cerrar sesión:', error);
+    }
+  };
+
+  const register = async (repartidorData) => {
+    try {
+      setLoading(true);
+      
+      console.log('📤 Registrando repartidor:', repartidorData);
+      console.log('🔗 URL:', buildApiUrl(API_CONFIG.ENDPOINTS.REPARTIDORES.BASE));
+
+      const response = await fetch(buildApiUrl(API_CONFIG.ENDPOINTS.REPARTIDORES.BASE), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(repartidorData),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Error en el registro');
+      }
+
+      const result = await response.json();
+      console.log('✅ Registro exitoso:', result);
+      
+      return { success: true, data: result };
+      
+    } catch (error) {
+      console.error('❌ Error en registro:', error);
+      let errorMessage = error.message;
+      
+      if (errorMessage.includes('email')) {
+        errorMessage = 'Ya existe un repartidor con ese email';
+      } else if (errorMessage.includes('dni')) {
+        errorMessage = 'Ya existe un repartidor con ese DNI';
+      } else if (errorMessage.includes('Failed to fetch')) {
+        errorMessage = 'No se pudo conectar con el servidor. Verifica tu conexión.';
+      }
+      
+      return { 
+        success: false, 
+        error: errorMessage 
+      };
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -71,6 +147,8 @@ export function AuthProvider({ children }) {
     loading,
     login,
     logout,
+    register,
+    isAuthenticated: !!user,
   };
 
   return (
